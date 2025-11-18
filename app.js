@@ -10,11 +10,7 @@ const app = express();
 app.set("trust proxy", 1);
 
 // ⬇️ agregá aquí todos los origins que van a pegarle al backend
-const allowedOrigins = [
-  "http://localhost:4040",
-  "http://localhost:5173",
-  // "https://tu-frontend-prod.com",
-];
+const allowedOrigins = ["http://localhost:4040", "http://localhost:5173"];
 
 // --- CORS primero, antes de todo ---
 app.use(
@@ -66,10 +62,7 @@ dbConnection();
 
 // ⬇️ Rutas (verificá que coincidan con lo que llama el front)
 app.use("/auth", require("./src/routes/auth"));
-app.use("/dataSet", require("./src/routes/dataSet"));
-// si tus controladores esperan /datasets en vez de /dataSet,
-// montá también el alias para evitar 404 en el preflight:
-app.use("/datasets", require("./src/routes/dataSet")); // <-- alias opcional
+app.use("/okr", require("./src/routes/okr"));
 
 app.listen(process.env.PORT, () => {
   console.log(`✅ Servidor corriendo en el puerto ${process.env.PORT}`);
