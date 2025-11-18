@@ -7,10 +7,10 @@ const userSchema = Schema({
   verificationToken: { type: String, required: false },
   resetToken: { type: String, required: false },
   resetTokenExpiration: { type: Number, required: false },
-  personalData: {
-    firstName: { type: String, required: true },
-    lastName: { type: String, required: true },
-  },
+
+  firstName: { type: String, required: true },
+  lastName: { type: String, required: true },
+
   role: {
     type: String,
     default: "user",
