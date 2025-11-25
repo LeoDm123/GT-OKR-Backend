@@ -47,15 +47,16 @@ const createUser = async (req, res) => {
     user = new Users({
       email,
       password: hashedPassword,
-      personalData: { firstName, lastName },
+      firstName,
+      lastName,
       verificationToken,
-      emailVerified: false,
+      emailVerified: true,
       ...rest,
     });
 
     await user.save();
 
-    await sendMail(email, verificationToken, firstName);
+    // await sendMail(email, verificationToken, firstName);
 
     res.status(201).json({
       msg: "Usuario registrado. Verifica tu email antes de iniciar sesión.",
@@ -147,8 +148,8 @@ const userLogin = async (req, res) => {
       msg: "Usuario autenticado.",
       token,
       user: {
-        name: user.personalData.firstName,
-        lastName: user.personalData.lastName,
+        name: user.firstName,
+        lastName: user.lastName,
         email: user.email,
         role: user.role,
       },

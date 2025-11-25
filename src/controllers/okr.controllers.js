@@ -1,4 +1,6 @@
 const OKR = require("../models/okr-model");
+const User = require("../models/user-model");
+const mongoose = require("mongoose");
 
 // Crear un nuevo OKR
 const createOKR = async (req, res) => {
@@ -30,6 +32,25 @@ const createOKR = async (req, res) => {
       return res
         .status(400)
         .json({ msg: "El propietario (owner) es requerido" });
+    }
+
+    // Convertir owner a ObjectId si es necesario
+    let ownerId = owner;
+
+    // Si owner es un email (contiene @), buscar el usuario por email
+    if (typeof owner === "string" && owner.includes("@")) {
+      const user = await User.findOne({ email: owner });
+      if (!user) {
+        return res.status(404).json({
+          msg: `Usuario con email "${owner}" no encontrado`,
+        });
+      }
+      ownerId = user._id;
+    } else if (!mongoose.Types.ObjectId.isValid(owner)) {
+      // Si no es un email ni un ObjectId válido
+      return res.status(400).json({
+        msg: "El propietario (owner) debe ser un ID de usuario válido o un email",
+      });
     }
 
     if (
@@ -92,7 +113,7 @@ const createOKR = async (req, res) => {
     const okr = new OKR({
       title: title.trim(),
       description: description?.trim() || "",
-      owner,
+      owner: ownerId,
       period,
       year,
       startDate: start,
@@ -361,6 +382,7 @@ const addKeyResult = async (req, res) => {
       unit: unit?.trim() || "",
       progress: 0,
       status: "not_started",
+      progressRecords: [], // Inicializar array de registros de avance
     };
 
     okr.keyResults.push(newKeyResult);
@@ -548,6 +570,253 @@ const deleteKeyResult = async (req, res) => {
   }
 };
 
+// Agregar un registro de avance a un Key Result
+const addProgressRecord = async (req, res) => {
+  try {
+    const { id, keyResultId } = req.params;
+    const { advanceUnits, advanceDate, comment } = req.body;
+
+    if (advanceUnits === undefined || typeof advanceUnits !== "number") {
+      return res.status(400).json({
+        msg: "Las unidades de avance son requeridas y deben ser un número",
+      });
+    }
+
+    const okr = await OKR.findById(id);
+
+    if (!okr) {
+      return res.status(404).json({ msg: "OKR no encontrado" });
+    }
+
+    const keyResult = okr.keyResults.id(keyResultId);
+
+    if (!keyResult) {
+      return res.status(404).json({ msg: "Key Result no encontrado" });
+    }
+
+    // Crear el registro de avance
+    const newProgressRecord = {
+      advanceUnits,
+      advanceDate: advanceDate ? new Date(advanceDate) : new Date(),
+      comment: comment?.trim() || "",
+    };
+
+    keyResult.progressRecords.push(newProgressRecord);
+
+    // Actualizar el currentValue sumando las unidades de avance
+    keyResult.currentValue = (keyResult.currentValue || 0) + advanceUnits;
+
+    // Recalcular el progreso
+    if (keyResult.targetValue > 0) {
+      keyResult.progress = Math.min(
+        100,
+        Math.max(
+          0,
+          Math.round((keyResult.currentValue / keyResult.targetValue) * 100)
+        )
+      );
+    }
+
+    // Actualizar estado basado en progreso
+    if (keyResult.progress >= 100) {
+      keyResult.status = "completed";
+      if (!keyResult.completedAt) {
+        keyResult.completedAt = new Date();
+      }
+    } else if (keyResult.progress > 0) {
+      if (keyResult.status === "not_started") {
+        keyResult.status = "in_progress";
+      }
+    }
+
+    await okr.save();
+    await okr.populate("owner", "email personalData");
+
+    res.status(200).json({
+      msg: "Registro de avance agregado con éxito",
+      okr,
+    });
+  } catch (error) {
+    console.error(error);
+    if (error.name === "CastError") {
+      return res.status(400).json({ msg: "ID inválido" });
+    }
+    res.status(500).json({
+      msg: "Hubo un problema al agregar el registro de avance",
+      error: error.message,
+    });
+  }
+};
+
+// Actualizar un registro de avance
+const updateProgressRecord = async (req, res) => {
+  try {
+    const { id, keyResultId, recordId } = req.params;
+    const { advanceUnits, advanceDate, comment } = req.body;
+
+    const okr = await OKR.findById(id);
+
+    if (!okr) {
+      return res.status(404).json({ msg: "OKR no encontrado" });
+    }
+
+    const keyResult = okr.keyResults.id(keyResultId);
+
+    if (!keyResult) {
+      return res.status(404).json({ msg: "Key Result no encontrado" });
+    }
+
+    const progressRecord = keyResult.progressRecords.id(recordId);
+
+    if (!progressRecord) {
+      return res.status(404).json({ msg: "Registro de avance no encontrado" });
+    }
+
+    // Guardar el valor anterior para recalcular currentValue
+    const oldAdvanceUnits = progressRecord.advanceUnits;
+
+    // Actualizar campos
+    if (advanceUnits !== undefined) {
+      if (typeof advanceUnits !== "number") {
+        return res.status(400).json({
+          msg: "Las unidades de avance deben ser un número",
+        });
+      }
+      progressRecord.advanceUnits = advanceUnits;
+    }
+
+    if (advanceDate !== undefined) {
+      const date = new Date(advanceDate);
+      if (isNaN(date.getTime())) {
+        return res.status(400).json({ msg: "La fecha de avance no es válida" });
+      }
+      progressRecord.advanceDate = date;
+    }
+
+    if (comment !== undefined) {
+      progressRecord.comment = comment?.trim() || "";
+    }
+
+    // Recalcular currentValue: restar el valor anterior y sumar el nuevo
+    if (advanceUnits !== undefined) {
+      keyResult.currentValue =
+        (keyResult.currentValue || 0) - oldAdvanceUnits + advanceUnits;
+
+      // Recalcular el progreso
+      if (keyResult.targetValue > 0) {
+        keyResult.progress = Math.min(
+          100,
+          Math.max(
+            0,
+            Math.round((keyResult.currentValue / keyResult.targetValue) * 100)
+          )
+        );
+      }
+
+      // Actualizar estado basado en progreso
+      if (keyResult.progress >= 100) {
+        keyResult.status = "completed";
+        if (!keyResult.completedAt) {
+          keyResult.completedAt = new Date();
+        }
+      } else if (keyResult.progress > 0) {
+        if (keyResult.status === "not_started") {
+          keyResult.status = "in_progress";
+        }
+      }
+    }
+
+    await okr.save();
+    await okr.populate("owner", "email personalData");
+
+    res.status(200).json({
+      msg: "Registro de avance actualizado con éxito",
+      okr,
+    });
+  } catch (error) {
+    console.error(error);
+    if (error.name === "CastError") {
+      return res.status(400).json({ msg: "ID inválido" });
+    }
+    res.status(500).json({
+      msg: "Hubo un problema al actualizar el registro de avance",
+      error: error.message,
+    });
+  }
+};
+
+// Eliminar un registro de avance
+const deleteProgressRecord = async (req, res) => {
+  try {
+    const { id, keyResultId, recordId } = req.params;
+
+    const okr = await OKR.findById(id);
+
+    if (!okr) {
+      return res.status(404).json({ msg: "OKR no encontrado" });
+    }
+
+    const keyResult = okr.keyResults.id(keyResultId);
+
+    if (!keyResult) {
+      return res.status(404).json({ msg: "Key Result no encontrado" });
+    }
+
+    const progressRecord = keyResult.progressRecords.id(recordId);
+
+    if (!progressRecord) {
+      return res.status(404).json({ msg: "Registro de avance no encontrado" });
+    }
+
+    // Restar las unidades de avance del currentValue
+    keyResult.currentValue = Math.max(
+      0,
+      (keyResult.currentValue || 0) - progressRecord.advanceUnits
+    );
+
+    // Eliminar el registro
+    keyResult.progressRecords.pull(recordId);
+
+    // Recalcular el progreso
+    if (keyResult.targetValue > 0) {
+      keyResult.progress = Math.min(
+        100,
+        Math.max(
+          0,
+          Math.round((keyResult.currentValue / keyResult.targetValue) * 100)
+        )
+      );
+    } else {
+      keyResult.progress = 0;
+    }
+
+    // Actualizar estado basado en progreso
+    if (keyResult.progress === 0) {
+      keyResult.status = "not_started";
+    } else if (keyResult.progress < 100 && keyResult.status === "completed") {
+      keyResult.status = "in_progress";
+      keyResult.completedAt = undefined;
+    }
+
+    await okr.save();
+    await okr.populate("owner", "email personalData");
+
+    res.status(200).json({
+      msg: "Registro de avance eliminado con éxito",
+      okr,
+    });
+  } catch (error) {
+    console.error(error);
+    if (error.name === "CastError") {
+      return res.status(400).json({ msg: "ID inválido" });
+    }
+    res.status(500).json({
+      msg: "Hubo un problema al eliminar el registro de avance",
+      error: error.message,
+    });
+  }
+};
+
 // Obtener estadísticas de OKR
 const getOKRStats = async (req, res) => {
   try {
@@ -610,5 +879,8 @@ module.exports = {
   addKeyResult,
   updateKeyResult,
   deleteKeyResult,
+  addProgressRecord,
+  updateProgressRecord,
+  deleteProgressRecord,
   getOKRStats,
 };

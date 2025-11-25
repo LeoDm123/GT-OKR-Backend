@@ -1,5 +1,15 @@
 const { Schema, model } = require("mongoose");
 
+// Schema para los registros de avance de un Key Result
+const progressRecordSchema = Schema(
+  {
+    advanceUnits: { type: Number, required: true }, // Unidades de avance
+    advanceDate: { type: Date, required: true, default: Date.now }, // Fecha de avance
+    comment: { type: String, required: false, default: "" }, // Comentario asociado
+  },
+  { _id: true, timestamps: true }
+);
+
 const keyResultSchema = Schema(
   {
     title: { type: String, required: true },
@@ -14,6 +24,8 @@ const keyResultSchema = Schema(
       default: "not_started",
     },
     completedAt: { type: Date, required: false },
+    // Matriz de registros de avance
+    progressRecords: [progressRecordSchema],
   },
   { _id: true }
 );
