@@ -11,30 +11,44 @@ app.set("trust proxy", 1);
 
 // ⬇️ agregá aquí todos los origins que van a pegarle al backend
 const allowedOrigins = [
-  "https://gt-quickdash.vercel.app/",
+  "https://gt-quickdash.vercel.app",
   "http://localhost:5173",
+  "http://localhost:3000",
 ];
 
+// Configuración de CORS
+const corsOptions = {
+  origin(origin, cb) {
+    // permitir server-to-server (Postman, curl) cuando no hay Origin
+    if (!origin) return cb(null, true);
+    // Verificar si el origen está en la lista (sin barra final)
+    const normalizedOrigin = origin.endsWith("/")
+      ? origin.slice(0, -1)
+      : origin;
+    if (
+      allowedOrigins.includes(normalizedOrigin) ||
+      allowedOrigins.includes(origin)
+    ) {
+      return cb(null, true);
+    }
+    console.warn(`[CORS] Origen no permitido: ${origin}`);
+    return cb(new Error("Not allowed by CORS"), false);
+  },
+  // ⬇️ incluir OPTIONS y PATCH
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  // ⬇️ headers típicos de fetch/axios; agregá otros si usás custom
+  allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
+  credentials: true,
+  maxAge: 86400, // cache del preflight (24 horas)
+  preflightContinue: false,
+  optionsSuccessStatus: 204,
+};
+
 // --- CORS primero, antes de todo ---
-app.use(
-  cors({
-    origin(origin, cb) {
-      // permitir server-to-server (Postman, curl) cuando no hay Origin
-      if (!origin) return cb(null, true);
-      if (allowedOrigins.includes(origin)) return cb(null, true);
-      return cb(new Error("Not allowed by CORS"), false);
-    },
-    // ⬇️ incluir OPTIONS y PATCH
-    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    // ⬇️ headers típicos de fetch/axios; agregá otros si usás custom
-    allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
-    credentials: true, // si NO usás cookies, podés poner false y usar origin: '*' (no mezclarlos)
-    maxAge: 600, // cache del preflight
-  })
-);
+app.use(cors(corsOptions));
 
 // ⬇️ responder de forma explícita todos los preflights
-app.options("*", cors());
+app.options("*", cors(corsOptions));
 
 // (opcional) Log simple de preflight para debug
 app.use((req, _res, next) => {
