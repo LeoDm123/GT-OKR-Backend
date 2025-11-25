@@ -10,7 +10,10 @@ const app = express();
 app.set("trust proxy", 1);
 
 // ⬇️ agregá aquí todos los origins que van a pegarle al backend
-const allowedOrigins = ["http://localhost:4040", "http://localhost:5173"];
+const allowedOrigins = [
+  "https://gt-quickdash.vercel.app/",
+  "http://localhost:5173",
+];
 
 // --- CORS primero, antes de todo ---
 app.use(
