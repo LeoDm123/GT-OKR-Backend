@@ -254,13 +254,63 @@ const updateOKR = async (req, res) => {
     const { id } = req.params;
     const updateData = req.body;
 
-    // Validar fechas si se proporcionan
-    if (updateData.startDate || updateData.endDate) {
-      const okr = await OKR.findById(id);
-      if (!okr) {
-        return res.status(404).json({ msg: "OKR no encontrado" });
-      }
+    const okr = await OKR.findById(id);
 
+    if (!okr) {
+      return res.status(404).json({ msg: "OKR no encontrado" });
+    }
+
+    // Validar y actualizar título
+    if (updateData.title !== undefined) {
+      if (
+        typeof updateData.title !== "string" ||
+        updateData.title.trim().length < 3
+      ) {
+        return res.status(400).json({
+          msg: "El título debe tener al menos 3 caracteres",
+        });
+      }
+      okr.title = updateData.title.trim();
+    }
+
+    // Actualizar descripción
+    if (updateData.description !== undefined) {
+      okr.description = updateData.description?.trim() || "";
+    }
+
+    // Validar y actualizar período
+    if (updateData.period !== undefined) {
+      if (
+        !["Q1", "Q2", "Q3", "Q4", "annual", "custom"].includes(
+          updateData.period
+        )
+      ) {
+        return res.status(400).json({
+          msg: "El período debe ser: Q1, Q2, Q3, Q4, annual o custom",
+        });
+      }
+      okr.period = updateData.period;
+    }
+
+    // Validar y actualizar año
+    if (updateData.year !== undefined) {
+      if (
+        typeof updateData.year !== "number" ||
+        updateData.year < 2000 ||
+        updateData.year > 2100
+      ) {
+        return res.status(400).json({
+          msg: "El año debe ser un número válido entre 2000 y 2100",
+        });
+      }
+      okr.year = updateData.year;
+    }
+
+    // Validar y actualizar fechas
+    if (
+      updateData.startDate !== undefined ||
+      updateData.endDate !== undefined
+    ) {
       const start = updateData.startDate
         ? new Date(updateData.startDate)
         : okr.startDate;
@@ -277,42 +327,84 @@ const updateOKR = async (req, res) => {
           msg: "La fecha de inicio debe ser anterior a la fecha de fin",
         });
       }
+
+      if (updateData.startDate) okr.startDate = start;
+      if (updateData.endDate) okr.endDate = end;
     }
 
-    // Validar período si se proporciona
-    if (
-      updateData.period &&
-      !["Q1", "Q2", "Q3", "Q4", "annual", "custom"].includes(updateData.period)
-    ) {
+    // Actualizar categoría
+    if (updateData.category !== undefined) {
+      okr.category = updateData.category?.trim() || "";
+    }
+
+    // Actualizar tags
+    if (updateData.tags !== undefined) {
+      if (Array.isArray(updateData.tags)) {
+        okr.tags = updateData.tags.filter(
+          (tag) => typeof tag === "string" && tag.trim().length > 0
+        );
+      } else {
+        return res.status(400).json({
+          msg: "Los tags deben ser un array de strings",
+        });
+      }
+    }
+
+    // Actualizar notas
+    if (updateData.notes !== undefined) {
+      okr.notes = updateData.notes?.trim() || "";
+    }
+
+    // Actualizar equipo
+    if (updateData.team !== undefined) {
+      okr.team = updateData.team?.trim() || "";
+    }
+
+    // Validar y actualizar visibilidad
+    if (updateData.visibility !== undefined) {
+      if (!["private", "team", "public"].includes(updateData.visibility)) {
+        return res.status(400).json({
+          msg: "La visibilidad debe ser: private, team o public",
+        });
+      }
+      okr.visibility = updateData.visibility;
+    }
+
+    // Validar y actualizar estado
+    if (updateData.status !== undefined) {
+      if (
+        !["draft", "active", "completed", "paused", "cancelled"].includes(
+          updateData.status
+        )
+      ) {
+        return res.status(400).json({
+          msg: "El estado debe ser: draft, active, completed, paused o cancelled",
+        });
+      }
+      okr.status = updateData.status;
+
+      // Si se marca como completado, establecer fecha de completación
+      if (updateData.status === "completed" && !okr.completedAt) {
+        okr.completedAt = new Date();
+      } else if (updateData.status !== "completed") {
+        okr.completedAt = undefined;
+      }
+    }
+
+    // No permitir cambiar el owner desde aquí (debe ser una operación separada)
+    if (updateData.owner !== undefined) {
       return res.status(400).json({
-        msg: "El período debe ser: Q1, Q2, Q3, Q4, annual o custom",
+        msg: "No se puede cambiar el propietario desde esta operación",
       });
     }
 
-    // Validar estado si se proporciona
-    if (
-      updateData.status &&
-      !["draft", "active", "completed", "paused", "cancelled"].includes(
-        updateData.status
-      )
-    ) {
-      return res.status(400).json({
-        msg: "El estado debe ser: draft, active, completed, paused o cancelled",
-      });
-    }
-
-    const updatedOKR = await OKR.findByIdAndUpdate(id, updateData, {
-      new: true,
-      runValidators: true,
-    }).populate("owner", "email personalData");
-
-    if (!updatedOKR) {
-      return res.status(404).json({ msg: "OKR no encontrado" });
-    }
+    // Guardar cambios (esto disparará los hooks de pre-save que calculan el progreso)
+    await okr.save();
+    await okr.populate("owner", "email personalData");
 
     res.status(200).json({
       msg: "OKR actualizado con éxito",
-      okr: updatedOKR,
+      okr,
     });
   } catch (error) {
     console.error(error);
@@ -475,6 +567,13 @@ const updateKeyResult = async (req, res) => {
       keyResult.status = updateData.status;
     }
 
+    // No permitir editar directamente los progressRecords desde aquí
+    if (updateData.progressRecords !== undefined) {
+      return res.status(400).json({
+        msg: "Los registros de avance deben editarse mediante las funciones específicas de progressRecords",
+      });
+    }
+
     // Calcular progreso automáticamente si se actualiza currentValue o targetValue
     if (
       updateData.currentValue !== undefined ||
@@ -502,6 +601,15 @@ const updateKeyResult = async (req, res) => {
         if (keyResult.status === "not_started") {
           keyResult.status = "in_progress";
         }
+      } else if (keyResult.progress === 0) {
+        // Si el progreso vuelve a 0, resetear estado
+        if (
+          keyResult.status === "completed" ||
+          keyResult.status === "in_progress"
+        ) {
+          keyResult.status = "not_started";
+          keyResult.completedAt = undefined;
+        }
       }
     }
 
@@ -510,6 +618,13 @@ const updateKeyResult = async (req, res) => {
       keyResult.progress = 100;
       keyResult.currentValue = keyResult.targetValue;
       keyResult.completedAt = new Date();
+    }
+
+    // Si se marca como no iniciado y tiene progreso, resetear valores
+    if (updateData.status === "not_started" && keyResult.progress > 0) {
+      keyResult.progress = 0;
+      keyResult.currentValue = 0;
+      keyResult.completedAt = undefined;
     }
 
     await okr.save();
