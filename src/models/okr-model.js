@@ -26,6 +26,13 @@ const keyResultSchema = Schema(
     completedAt: { type: Date, required: false },
     // Matriz de registros de avance
     progressRecords: [progressRecordSchema],
+    // Responsables del Key Result (puede tener uno o varios)
+    responsibles: [
+      {
+        type: Schema.Types.ObjectId,
+        ref: "User",
+      },
+    ],
   },
   { _id: true }
 );

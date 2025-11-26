@@ -2,6 +2,35 @@ const OKR = require("../models/okr-model");
 const User = require("../models/user-model");
 const mongoose = require("mongoose");
 
+// Función auxiliar para convertir responsables (emails o IDs) a ObjectIds
+const convertResponsiblesToObjectIds = async (responsibles) => {
+  if (!responsibles || !Array.isArray(responsibles)) {
+    return [];
+  }
+
+  const objectIds = [];
+
+  for (const responsible of responsibles) {
+    if (mongoose.Types.ObjectId.isValid(responsible)) {
+      // Si es un ObjectId válido, usarlo directamente
+      objectIds.push(responsible);
+    } else if (typeof responsible === "string" && responsible.includes("@")) {
+      // Si es un email, buscar el usuario
+      const user = await User.findOne({ email: responsible });
+      if (!user) {
+        throw new Error(`Usuario con email "${responsible}" no encontrado`);
+      }
+      objectIds.push(user._id);
+    } else {
+      throw new Error(
+        `Responsable inválido: "${responsible}". Debe ser un ID de usuario válido o un email`
+      );
+    }
+  }
+
+  return objectIds;
+};
+
 // Crear un nuevo OKR
 const createOKR = async (req, res) => {
   try {
@@ -87,7 +116,8 @@ const createOKR = async (req, res) => {
       });
     }
 
-    // Validar Key Results si se proporcionan
+    // Validar y procesar Key Results si se proporcionan
+    let processedKeyResults = [];
     if (keyResults && Array.isArray(keyResults)) {
       for (const kr of keyResults) {
         if (
@@ -107,6 +137,30 @@ const createOKR = async (req, res) => {
             msg: "Cada Key Result debe tener un valor objetivo numérico",
           });
         }
+
+        // Convertir responsables a ObjectIds si se proporcionan
+        let responsiblesIds = [];
+        if (kr.responsibles) {
+          try {
+            responsiblesIds = await convertResponsiblesToObjectIds(
+              kr.responsibles
+            );
+          } catch (error) {
+            return res.status(400).json({ msg: error.message });
+          }
+        }
+
+        processedKeyResults.push({
+          title: kr.title.trim(),
+          description: kr.description?.trim() || "",
+          targetValue: kr.targetValue,
+          currentValue: 0,
+          unit: kr.unit?.trim() || "",
+          progress: 0,
+          status: "not_started",
+          responsibles: responsiblesIds,
+          progressRecords: [],
+        });
       }
     }
 
@@ -118,7 +172,7 @@ const createOKR = async (req, res) => {
       year,
       startDate: start,
       endDate: end,
-      keyResults: keyResults || [],
+      keyResults: processedKeyResults,
       category: category?.trim() || "",
       tags: tags || [],
       notes: notes?.trim() || "",
@@ -129,8 +183,10 @@ const createOKR = async (req, res) => {
 
     await okr.save();
 
-    // Populate owner para devolver datos completos
+    // Populate owner y responsables para devolver datos completos
     await okr.populate("owner", "email personalData");
+    await okr.populate("keyResults.responsibles", "email firstName lastName");
+    await okr.populate("keyResults.responsibles", "email firstName lastName");
 
     res.status(201).json({
       msg: "OKR creado con éxito",
@@ -174,6 +230,8 @@ const getOKRs = async (req, res) => {
 
     const okrs = await OKR.find(query)
       .populate("owner", "email personalData")
+      .populate("keyResults.responsibles", "email firstName lastName")
+      .populate("keyResults.responsibles", "email firstName lastName")
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(parseInt(limit));
@@ -203,7 +261,10 @@ const getOKRById = async (req, res) => {
   try {
     const { id } = req.params;
 
-    const okr = await OKR.findById(id).populate("owner", "email personalData");
+    const okr = await OKR.findById(id)
+      .populate("owner", "email personalData")
+      .populate("keyResults.responsibles", "email firstName lastName")
+      .populate("keyResults.responsibles", "email firstName lastName");
 
     if (!okr) {
       return res.status(404).json({ msg: "OKR no encontrado" });
@@ -236,6 +297,8 @@ const getOKRsByOwner = async (req, res) => {
 
     const okrs = await OKR.find(query)
       .populate("owner", "email personalData")
+      .populate("keyResults.responsibles", "email firstName lastName")
+      .populate("keyResults.responsibles", "email firstName lastName")
       .sort({ createdAt: -1 });
 
     res.status(200).json({ okrs, count: okrs.length });
@@ -401,6 +464,7 @@ const updateOKR = async (req, res) => {
     // Guardar cambios (esto disparará los hooks de pre-save que calculan el progreso)
     await okr.save();
     await okr.populate("owner", "email personalData");
+    await okr.populate("keyResults.responsibles", "email firstName lastName");
 
     res.status(200).json({
       msg: "OKR actualizado con éxito",
@@ -446,7 +510,7 @@ const deleteOKR = async (req, res) => {
 const addKeyResult = async (req, res) => {
   try {
     const { id } = req.params;
-    const { title, description, targetValue, unit } = req.body;
+    const { title, description, targetValue, unit, responsibles } = req.body;
 
     if (!title || typeof title !== "string" || title.trim().length < 3) {
       return res.status(400).json({
@@ -466,6 +530,16 @@ const addKeyResult = async (req, res) => {
       return res.status(404).json({ msg: "OKR no encontrado" });
     }
 
+    // Convertir responsables a ObjectIds si se proporcionan
+    let responsiblesIds = [];
+    if (responsibles) {
+      try {
+        responsiblesIds = await convertResponsiblesToObjectIds(responsibles);
+      } catch (error) {
+        return res.status(400).json({ msg: error.message });
+      }
+    }
+
     const newKeyResult = {
       title: title.trim(),
       description: description?.trim() || "",
@@ -474,12 +548,17 @@ const addKeyResult = async (req, res) => {
       unit: unit?.trim() || "",
       progress: 0,
       status: "not_started",
+      responsibles: responsiblesIds,
+      progressRecords: [],
     };
 
     okr.keyResults.push(newKeyResult);
     await okr.save();
 
+    // Popular owner y responsables de todos los Key Results
     await okr.populate("owner", "email personalData");
+    await okr.populate("keyResults.responsibles", "email firstName lastName");
+    await okr.populate("keyResults.responsibles", "email firstName lastName");
 
     res.status(200).json({
       msg: "Key Result agregado con éxito",
@@ -567,6 +646,18 @@ const updateKeyResult = async (req, res) => {
       keyResult.status = updateData.status;
     }
 
+    // Actualizar responsables si se proporcionan
+    if (updateData.responsibles !== undefined) {
+      try {
+        const responsiblesIds = await convertResponsiblesToObjectIds(
+          updateData.responsibles
+        );
+        keyResult.responsibles = responsiblesIds;
+      } catch (error) {
+        return res.status(400).json({ msg: error.message });
+      }
+    }
+
     // No permitir editar directamente los progressRecords desde aquí
     if (updateData.progressRecords !== undefined) {
       return res.status(400).json({
@@ -629,6 +720,8 @@ const updateKeyResult = async (req, res) => {
 
     await okr.save();
     await okr.populate("owner", "email personalData");
+    await okr.populate("keyResults.responsibles", "email firstName lastName");
+    await okr.populate("keyResults.responsibles", "email firstName lastName");
 
     res.status(200).json({
       msg: "Key Result actualizado con éxito",
@@ -667,6 +760,7 @@ const deleteKeyResult = async (req, res) => {
     await okr.save();
 
     await okr.populate("owner", "email personalData");
+    await okr.populate("keyResults.responsibles", "email firstName lastName");
 
     res.status(200).json({
       msg: "Key Result eliminado con éxito",
@@ -745,6 +839,7 @@ const addProgressRecord = async (req, res) => {
 
     await okr.save();
     await okr.populate("owner", "email personalData");
+    await okr.populate("keyResults.responsibles", "email firstName lastName");
 
     res.status(200).json({
       msg: "Registro de avance agregado con éxito",
@@ -842,6 +937,7 @@ const updateProgressRecord = async (req, res) => {
 
     await okr.save();
     await okr.populate("owner", "email personalData");
+    await okr.populate("keyResults.responsibles", "email firstName lastName");
 
     res.status(200).json({
       msg: "Registro de avance actualizado con éxito",
@@ -914,6 +1010,7 @@ const deleteProgressRecord = async (req, res) => {
 
     await okr.save();
     await okr.populate("owner", "email personalData");
+    await okr.populate("keyResults.responsibles", "email firstName lastName");
 
     res.status(200).json({
       msg: "Registro de avance eliminado con éxito",
