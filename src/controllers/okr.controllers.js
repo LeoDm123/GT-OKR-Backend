@@ -382,7 +382,6 @@ const addKeyResult = async (req, res) => {
       unit: unit?.trim() || "",
       progress: 0,
       status: "not_started",
-      progressRecords: [], // Inicializar array de registros de avance
     };
 
     okr.keyResults.push(newKeyResult);
